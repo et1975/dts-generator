@@ -48,6 +48,9 @@ export interface Options {
 // declare some constants so we don't have magic integers without explanation
 const DTSLEN = '.d.ts'.length;
 
+// used to find relative paths to replace with their absolute
+const relativePathsRegex = /(?:from\s+|import\s+|require\()['"]((?:\.|\.\.)\/[^'"]*)['"]/g;
+
 const filenameToMid: (filename: string) => string = (function () {
 	if (pathUtil.sep === '/') {
 		return function (filename: string) {
@@ -136,7 +139,6 @@ function processTree(sourceFile: ts.SourceFile, replacer: (node: ts.Node) => str
 
 /**
  * Load and parse a TSConfig File
- * @param options The dts-generator options to load config into
  * @param fileName The path to the file
  */
 function getTSConfig(fileName: string): [string[], ts.CompilerOptions] {
@@ -497,7 +499,19 @@ export default function generate(options: Options): Promise<void> {
 				}
 			});
 
-			output.write(content.replace(nonEmptyLineStart, '$&' + indent));
+			let match: RegExpExecArray;
+			let resultContent: string = content;
+			while ((match = relativePathsRegex.exec(content)) != null) {
+				const relativePath = match[1];
+				const absolutePath = pathUtil.posix.join(pathUtil.dirname(resolvedModuleId), match[1]);
+
+				// replace relative paths with absolute
+				resultContent = resultContent
+					.replace(`'${relativePath}'`, `'${absolutePath}'`)
+					.replace(`"${relativePath}"`, `"${absolutePath}"`);
+			}
+
+			output.write(resultContent.replace(nonEmptyLineStart, '$&' + indent));
 			output.write(eol + '}' + eol);
 		}
 		else {
