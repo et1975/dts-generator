@@ -49,7 +49,7 @@ export interface Options {
 const DTSLEN = '.d.ts'.length;
 
 // used to find relative paths to replace with their absolute
-const relativePathsRegex = /(?:from\s+|import\s+|require\()['"]((?:\.|\.\.)\/[^'"]*)['"]/g;
+const relativePathsRegex = /((?:from\s+|import\s+|require\()['"])((?:\.|\.\.)\/[^'"]*)(['"])/g;
 
 const filenameToMid: (filename: string) => string = (function () {
 	if (pathUtil.sep === '/') {
@@ -499,19 +499,12 @@ export default function generate(options: Options): Promise<void> {
 				}
 			});
 
-			let match: RegExpExecArray;
-			let resultContent: string = content;
-			while ((match = relativePathsRegex.exec(content)) != null) {
-				const relativePath = match[1];
-				const absolutePath = pathUtil.posix.join(pathUtil.dirname(resolvedModuleId), match[1]);
+			const absolutePathContent = content.replace(relativePathsRegex, (match, p1, p2, p3) => {
+				const absolutePath = pathUtil.posix.join(pathUtil.dirname(resolvedModuleId), p2);
+				return `${p1}${absolutePath}${p3}`
+			});
 
-				// replace relative paths with absolute
-				resultContent = resultContent
-					.replace(`'${relativePath}'`, `'${absolutePath}'`)
-					.replace(`"${relativePath}"`, `"${absolutePath}"`);
-			}
-
-			output.write(resultContent.replace(nonEmptyLineStart, '$&' + indent));
+			output.write(absolutePathContent.replace(nonEmptyLineStart, '$&' + indent));
 			output.write(eol + '}' + eol);
 		}
 		else {
