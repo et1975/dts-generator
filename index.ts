@@ -48,9 +48,6 @@ export interface Options {
 // declare some constants so we don't have magic integers without explanation
 const DTSLEN = '.d.ts'.length;
 
-// used to find relative paths to replace with their absolute
-const relativePathsRegex = /((?:from\s+|import\s+|require\()['"])((?:\.|\.\.)\/[^'"]*)(['"])/g;
-
 const filenameToMid: (filename: string) => string = (function () {
 	if (pathUtil.sep === '/') {
 		return function (filename: string) {
@@ -104,7 +101,7 @@ function getFilenames(baseDir: string, files: string[]): string[] {
 	});
 }
 
-function processTree(sourceFile: ts.SourceFile, replacer: (node: ts.Node) => string): string {
+function processTree(sourceFile: ts.SourceFile, replacer: (node: ts.Node, sourceFile: ts.SourceFile) => string): string {
 	let code = '';
 	let cursorPosition = 0;
 
@@ -120,7 +117,7 @@ function processTree(sourceFile: ts.SourceFile, replacer: (node: ts.Node) => str
 	function visit(node: ts.Node) {
 		readThrough(node);
 
-		const replacement = replacer(node);
+		const replacement = replacer(node, sourceFile);
 
 		if (replacement != null) {
 			code += replacement;
@@ -471,7 +468,7 @@ export default function generate(options: Options): Promise<void> {
 
 			output.write('declare module \'' + resolvedModuleId + '\' {' + eol + indent);
 
-			const content = processTree(declarationFile, function (node) {
+			const content = processTree(declarationFile, function (node, sourceFile) {
 				if (isNodeKindExternalModuleReference(node)) {
 					// TODO figure out if this branch is possible, and if so, write a test
 					// that covers it.
@@ -492,19 +489,28 @@ export default function generate(options: Options): Promise<void> {
 				) {
 					// This block of code is modifying the names of imported modules
 					const text = node.text;
+
 					const resolved: string = resolveModuleImport(text);
 					if (resolved) {
 						return ` '${resolved}'`;
 					}
+				} else if (isNodeKindExportDeclaration(node) || isNodeKindImportDeclaration(node)) {
+					if (node.moduleSpecifier && ts.isStringLiteral(node.moduleSpecifier)) {
+						if (node.moduleSpecifier && node.moduleSpecifier.text && node.moduleSpecifier.text[0] === '.') {
+							if (node.moduleSpecifier && node.moduleSpecifier.text && node.moduleSpecifier.text[0] === '.') {
+								const absolutePath = pathUtil.posix.join(pathUtil.dirname(resolvedModuleId), node.moduleSpecifier.text);
+								const start = sourceFile.text.slice(node.pos, node.moduleSpecifier.pos);
+								const middle = sourceFile.text.slice(node.moduleSpecifier.pos, node.moduleSpecifier.end);
+								const end = sourceFile.text.slice(node.moduleSpecifier.end, node.end);
+
+								return `${start}${middle.replace(node.moduleSpecifier.text, absolutePath)}${end}`;
+							}
+						}
+					}
 				}
 			});
 
-			const absolutePathContent = content.replace(relativePathsRegex, (match, p1, p2, p3) => {
-				const absolutePath = pathUtil.posix.join(pathUtil.dirname(resolvedModuleId), p2);
-				return `${p1}${absolutePath}${p3}`
-			});
-
-			output.write(absolutePathContent.replace(nonEmptyLineStart, '$&' + indent));
+			output.write(content.replace(nonEmptyLineStart, '$&' + indent));
 			output.write(eol + '}' + eol);
 		}
 		else {
