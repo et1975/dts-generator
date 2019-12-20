@@ -14,7 +14,7 @@
     "dts-generator": "bin/dts-generator"
   },
   "scripts": {
-    "prepublishOnly": "tsc --module umd --target es2015 --moduleResolution node index.ts bin/dts-generator.ts",
+    "prepare": "tsc --module umd --target es2015 --moduleResolution node index.ts bin/dts-generator.ts",
     "test": "tests/run.sh"
   },
   "dependencies": {

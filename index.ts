@@ -184,6 +184,18 @@ function isNodeKindModuleDeclaration(value: ts.Node): value is ts.ModuleDeclarat
 }
 
 export default function generate(options: Options): Promise<void> {
+	function resolveModuleWithPrefix(name:string):string {
+		let resolvedModuleId = options.prefix ? `${options.prefix}/${name}`:name;
+		if (options.resolveModuleId) {
+			const resolveModuleIdResult: string = options.resolveModuleId({
+				currentModuleId: resolvedModuleId
+			});
+			if (resolveModuleIdResult) {
+				resolvedModuleId = resolveModuleIdResult;
+			}
+		}
+		return resolvedModuleId;
+	}
 
 	if (Boolean(options.main) !== Boolean(options.name)) {
 		if (Boolean(options.name)) {
@@ -320,7 +332,7 @@ export default function generate(options: Options): Promise<void> {
 		sendMessage('processing:');
 		let mainExportDeclaration = false;
 		let mainExportAssignment = false;
-		let foundMain = false;
+		let foundMain = null;
 
 		program.getSourceFiles().forEach(function (sourceFile) {
 			processTree(sourceFile, function (node) {
@@ -354,8 +366,10 @@ export default function generate(options: Options): Promise<void> {
 			}
 
 			// We can optionally output the main module if there's something to export.
-			if (options.main && options.main === (options.prefix + filenameToMid(sourceFile.fileName.slice(baseDir.length, -3)))) {
-				foundMain = true;
+			const resolvedModuleId: string = 
+				resolveModuleWithPrefix(filenameToMid(sourceFile.fileName.slice(baseDir.length+1, -3)));
+			if (options.main && options.main === resolvedModuleId) {
+				foundMain = resolvedModuleId;
 				ts.forEachChild(sourceFile, function (node: ts.Node) {
 					mainExportDeclaration = mainExportDeclaration || isNodeKindExportDeclaration(node);
 					mainExportAssignment = mainExportAssignment || isNodeKindExportAssignment(node);
@@ -383,17 +397,17 @@ export default function generate(options: Options): Promise<void> {
 			output.write(`declare module '${options.name}' {` + eol + indent);
 			if (compilerOptions.target >= ts.ScriptTarget.ES2015) {
 				if (mainExportAssignment) {
-					output.write(`export {default} from '${options.main}';` + eol + indent);
+					output.write(`export {default} from '${foundMain}';` + eol + indent);
 				}
 				if (mainExportDeclaration) {
-					output.write(`export * from '${options.main}';` + eol);
+					output.write(`export * from '${foundMain}';` + eol);
 				}
 			} else {
-				output.write(`import main = require('${options.main}');` + eol + indent);
+				output.write(`import main = require('${foundMain}');` + eol + indent);
 				output.write('export = main;' + eol);
 			}
 			output.write('}' + eol);
-			sendMessage(`Aliased main module ${options.name} to ${options.main}`);
+			sendMessage(`Aliased main module ${options.name} to ${foundMain}`);
 		}
 
 		sendMessage(`output to "${options.out}"`);
@@ -411,8 +425,6 @@ export default function generate(options: Options): Promise<void> {
 		// alongside the source, so use baseDir in that case too.
 		const outputDir = (isOutput && Boolean(outDir)) ? pathUtil.resolve(outDir) : baseDir;
 
-		const sourceModuleId = filenameToMid(filename.slice(outputDir.length + 1, -DTSLEN));
-
 		const currentModuleId = filenameToMid(filename.slice(outputDir.length + 1, -DTSLEN));
 		function resolveModuleImport(moduleId: string): string {
 			const isDeclaredExternalModule: boolean = declaredExternalModules.indexOf(moduleId) !== -1;
@@ -429,7 +441,7 @@ export default function generate(options: Options): Promise<void> {
 			if (!resolved) {
 				// resolve relative imports relative to the current module id.
 				if (moduleId.charAt(0) === '.') {
-					resolved = filenameToMid(pathUtil.join(pathUtil.dirname(sourceModuleId), moduleId));
+					resolved = filenameToMid(pathUtil.join(pathUtil.dirname(currentModuleId), moduleId));
 				} else {
 					resolved = moduleId;
 				}
@@ -452,19 +464,8 @@ export default function generate(options: Options): Promise<void> {
 		/* For some reason, SourceFile.externalModuleIndicator is missing from 1.6+, so having
 		 * to use a sledgehammer on the nut */
 		if ((<any> declarationFile).externalModuleIndicator) {
-			let resolvedModuleId: string = sourceModuleId;
-			if (options.resolveModuleId) {
-				const resolveModuleIdResult: string = options.resolveModuleId({
-					currentModuleId: currentModuleId
-				});
-				if (resolveModuleIdResult) {
-					resolvedModuleId = resolveModuleIdResult;
-				} else if (options.prefix) {
-					resolvedModuleId = `${options.prefix}/${resolvedModuleId}`;
-				}
-			} else if (options.prefix) {
-				resolvedModuleId = `${options.prefix}/${resolvedModuleId}`;
-			}
+			let resolvedModuleId: string = 
+				resolveModuleWithPrefix(currentModuleId);
 
 			output.write('declare module \'' + resolvedModuleId + '\' {' + eol + indent);
 
@@ -503,7 +504,7 @@ export default function generate(options: Options): Promise<void> {
 								const middle = sourceFile.text.slice(node.moduleSpecifier.pos, node.moduleSpecifier.end);
 								const end = sourceFile.text.slice(node.moduleSpecifier.end, node.end);
 
-								return `${start}${middle.replace(node.moduleSpecifier.text, absolutePath)}${end}`;
+								return `${start}${middle.replace(node.moduleSpecifier.text, resolveModuleImport(absolutePath))}${end}`;
 							}
 						}
 					}
